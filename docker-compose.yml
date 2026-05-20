@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: vera-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_1_URL=http://model-1-service:8000/transcribe
+      - MODEL_2_URL=http://model-2-service:8000/transcribe
+      - MODEL_B_URL=http://model-b-service:8000/transcribe
+    depends_on:
+      - model-1-service
+      - model-2-service
+      - model-b-service
+    networks:
+      - vera-network
+
+  model-1-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.model
+    container_name: vera-model-1
+    environment:
+      - MODEL_PATH=/app/model-1
+      - DEVICE=cuda
+      - COMPUTE_TYPE=float16
+    volumes:
+      - ./model-1:/app/model-1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - vera-network
+
+  model-2-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.model
+    container_name: vera-model-2
+    environment:
+      - MODEL_PATH=/app/model-2
+      - DEVICE=cuda
+      - COMPUTE_TYPE=float16
+    volumes:
+      - ./model-2:/app/model-2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - vera-network
+
+  model-b-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.model
+    container_name: vera-model-b
+    environment:
+      - MODEL_PATH=/app/model-b
+      - DEVICE=cuda
+      - COMPUTE_TYPE=float16
+    volumes:
+      - ./model-b:/app/model-b
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - vera-network
+
+networks:
+  vera-network:
+    driver: bridge

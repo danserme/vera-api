@@ -1,0 +1,13 @@
+.gcloudignore
+.git
+.gitignore
+.venv/
+venv/
+ENV/
+env/
+.DS_Store
+*.pyc
+__pycache__/
+model-1/
+model-2/
+model-b/
