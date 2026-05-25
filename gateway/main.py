@@ -87,17 +87,32 @@ async def transcribe(
                 print(f"WARNING: No OIDC token acquired for downstream {selected_model} request", flush=True)
         
         # Asynchronously forward the file to the downstream microservice
-        # We specify a generous timeout (e.g. 60 seconds) for large audio files
+        # We specify a generous timeout (e.g. 180 seconds) to accommodate potential container cold starts
+        # and GCSFuse mounting/loading times for the large Whisper models.
         async with httpx.AsyncClient() as client:
             files = {"file": (audio_file.filename, file_bytes, audio_file.content_type)}
-            response = await client.post(target_url, files=files, headers=headers, timeout=60.0)
+            response = await client.post(target_url, files=files, headers=headers, timeout=180.0)
 
         # Handle downstream failures
         if response.status_code != 200:
             print(f"Downstream service {selected_model} failed with status {response.status_code}: {response.text}")
+            
+            # Detect Cloud Run GPU Quota / Concurrency / Rate Exceeded issues
+            error_detail = response.text
+            if response.status_code in [503, 429] or "rate exceeded" in error_detail.lower():
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"Downstream transcription service '{selected_model}' returned {response.status_code} (Rate/Quota Exceeded). "
+                        "This typically indicates a regional GPU quota conflict in Google Cloud Run (e.g., maximum of 1 L4 GPU active in us-east4). "
+                        "If another model (like model-b or model-2) was recently queried, it is still active and holding the GPU. "
+                        "To switch models immediately, please kill the active warm instance using gcloud (e.g. by updating its env vars to force a restart) or wait for it to scale down."
+                    )
+                )
+            
             raise HTTPException(
                 status_code=response.status_code,
-                detail=f"Downstream transcription failed: {response.text}"
+                detail=f"Downstream transcription failed: {error_detail}"
             )
 
         result = response.json()
@@ -114,11 +129,21 @@ async def transcribe(
             "model_used": selected_model
         }
 
+    except httpx.TimeoutException as exc:
+        print(f"Gateway timeout connecting to {selected_model}: {exc}")
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"Downstream transcription service '{selected_model}' timed out. "
+                "This usually happens during a container cold start while loading large model weights from GCS. "
+                "The container is likely still booting up and will be warm for your next request. Please try again in a few seconds."
+            )
+        )
     except httpx.RequestError as exc:
         print(f"Gateway request error connecting to {selected_model}: {exc}")
         raise HTTPException(
             status_code=503,
-            detail=f"Downstream transcription service '{selected_model}' is currently unreachable."
+            detail=f"Downstream transcription service '{selected_model}' is currently unreachable: {exc}"
         )
     except Exception as e:
         print(f"Gateway unexpected error: {str(e)}")
